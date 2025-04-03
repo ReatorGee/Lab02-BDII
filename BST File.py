@@ -52,15 +52,39 @@ class ArchivoAVL:
     def insert(record):
         
     def leer():
-        
+
     def search(key):
-        
+        with open(self.filename, 'rb') as file:
+            id = file.read(1)
+            file.read(RECORD_SIZE - 2)
+            left = struct.unpack(FORMAT, file.read(1))
+            right = struct.unpack(FORMAT, file.read(1))
+            while id != key:
+                if id < key:
+                    file.seek(left * RECORD_SIZE)
+                elif id > key:
+                    file.seek(right * RECORD_SIZE)
+            datos_binarios = file.read(RECORD_SIZE)
+            print(f"Registro {key}: ")
+            print(struct.unpack(FORMAT, datos_binarios))
     
     def remove(key):
-        
-    
+
     def rangeSearch(init_key, end_key):
-        
+        with open(self.filename, 'rb') as file:
+            id = file.read(1)
+            file.read(RECORD_SIZE - 2)
+            left = struct.unpack(FORMAT, file.read(1))
+            right = struct.unpack(FORMAT, file.read(1))
+            while id != init_key:
+                if id < init_key:
+                    file.seek(left * RECORD_SIZE)
+                elif id > init_key:
+                    file.seek(right * RECORD_SIZE)
+            while id != end_key:
+                datos_binarios = file.read(RECORD_SIZE)
+                print("Registro : ")
+                print(struct.unpack(FORMAT, datos_binarios))
 
     
 # Código de prueba
