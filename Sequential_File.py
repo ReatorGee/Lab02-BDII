@@ -1,13 +1,12 @@
-import os
 import struct
-import csv
+import os
 
-# Formato del registro: int, 30s, int, float, 10s, int (activo o eliminado)
+# Definición del formato: < indica little-endian y sin padding
 FORMAT = "<i30sif10si1si"
 RECORD_SIZE = struct.calcsize(FORMAT)
 
 class Venta:
-    def __init__(self, id, nombre, cantidad, precio, fechaVenta, indice='-1', filetype='d', activo=1):
+    def __init__(self, id, nombre, cantidad, precio, fechaVenta, indice=-1, filetype='d', activo=1):
         self.id = id
         self.nombre = nombre[:30].ljust(30)
         self.cantidad = cantidad
@@ -18,146 +17,250 @@ class Venta:
         self.activo = activo
 
     def to_bytes(self):
-        return struct.pack(FORMAT, self.id, self.nombre.encode('latin1'), self.cantidad, self.precio, self.fechaVenta.encode('latin1'), self.indice, self.filetype.encode('latin1'), self.activo)
+        return struct.pack(
+            FORMAT,
+            self.id,
+            self.nombre.encode('latin1'),
+            self.cantidad,
+            self.precio,
+            self.fechaVenta.encode('latin1'),
+            int(self.indice),
+            self.filetype.encode('latin1'),
+            self.activo
+        )
 
     @staticmethod
     def from_bytes(data):
         id, nombre, cantidad, precio, fechaVenta, indice, filetype, activo = struct.unpack(FORMAT, data)
-        return Venta(id, nombre.decode('latin1').strip(), cantidad, precio, fechaVenta.decode('latin1').strip(), indice, filetype.encode('latin1'), activo)
+        return Venta(
+            id,
+            nombre.decode('latin1').strip(),
+            cantidad,
+            precio,
+            fechaVenta.decode('latin1').strip(),
+            indice,
+            filetype.decode('latin1').strip(),
+            activo
+        )
 
 class SequentialFile:
-
     def __init__(self, filename, auxfile, k):
         self.filename = filename
         self.auxfile = auxfile
-        self.k = k
+        self.k = k  # límite del auxiliar
         if not os.path.exists(self.filename):
             open(self.filename, 'wb').close()
         if not os.path.exists(self.auxfile):
             open(self.auxfile, 'wb').close()
 
     def insert(self, record: Venta):
-        limit = self.k
+        inserted = False
         with open(self.filename, 'r+b') as file:
-            
+            file.seek(0)
+            pos = 0
             while True:
-                default_index = 0
-
+                current_pos = file.tell()
                 index_data = file.read(4)
-                binary_data = file.read(RECORD_SIZE)
-                if not index_data:
-                    file.write(struct.pack('i', default_index))
-                    file.write(Venta.to_bytes(record))
+                data = file.read(RECORD_SIZE)
+                if not index_data or not data:
                     break
-                temp = Venta.from_bytes(binary_data)
-                index = struct.unpack('i', index_data)[0]
 
+                index = struct.unpack('<i', index_data)[0]
+                current = Venta.from_bytes(data)
+
+                next_pos = file.tell()
                 next_index_data = file.read(4)
                 next_data = file.read(RECORD_SIZE)
-                if not next_index_data:
-                    if temp.activo == 0:
-                        file.seek(index * (RECORD_SIZE + 4))
-                        file.write(Venta.to_bytes(record))
+
+                if not next_index_data or not next_data:
+                    break
+
+                next_index = struct.unpack('<i', next_index_data)[0]
+                next_record = Venta.from_bytes(next_data)
+
+                if current.id < record.id < next_record.id:
+                    if self.k == 0:
+                        self.rebuild()
+                        self.insert(record)
+                        return
                     else:
-                        file.write(struct.pack('i', index + 1))
-                        file.write(Venta.to_bytes(record))
-                else:
-                    index2 = struct.unpack('i', next_index_data)[0]
-                    temp2 = Venta.from_bytes(next_data)
-
-                    #overflow
-                    if temp.id < record.id < temp2.id:
                         with open(self.auxfile, 'ab') as aux:
-                            aux_index = 0
-                            registers = []
+                            aux_index = aux.tell() // (4 + RECORD_SIZE)
+                            aux.write(struct.pack('<i', -1))
+                            aux.write(record.to_bytes())
+                            # Actualizar punteros lógicos
+                            current.indice = aux_index
+                            current.filetype = 'a'
+                            file.seek(current_pos + 4)  # después del índice
+                            file.write(current.to_bytes())
+                            self.k -= 1
+                            inserted = True
+                            break
 
-                            if limit == 0:
+                file.seek(next_pos)
 
-                                file.seek(0)
-                                while True:
-                                    check = file.read(4)
-                                    if not check:
-                                        break
-                                    register_data = file.read(RECORD_SIZE)
-                                    register = Venta.from_bytes(register_data)
-                                    registers.append(register)
+            if not inserted:
+                file.seek(0, os.SEEK_END)
+                file.write(struct.pack('<i', -1))
+                file.write(record.to_bytes())
 
-                                while True:
-                                    check2 = aux.read(4)
-                                    if not check2:
-                                        break
-                                    register_data_aux = aux.read(RECORD_SIZE)
-                                    register_aux = Venta.from_bytes(register_data_aux)
-                                    registers.append(register_aux)
+    def rebuild(self):
+        registros = []
+        # Leer archivo principal
+        with open(self.filename, 'rb') as file:
+            while True:
+                index_data = file.read(4)
+                if not index_data:
+                    break
+                data = file.read(RECORD_SIZE)
+                if not data:
+                    break
+                reg = Venta.from_bytes(data)
+                if reg.activo == 1:
+                    registros.append(reg)
 
-                                registers.append(Venta.record)
+        # Leer archivo auxiliar
+        with open(self.auxfile, 'rb') as aux:
+            while True:
+                index_data = aux.read(4)
+                if not index_data:
+                    break
+                data = aux.read(RECORD_SIZE)
+                if not data:
+                    break
+                reg = Venta.from_bytes(data)
+                if reg.activo == 1:
+                    registros.append(reg)
 
-                                registers.sort(key=lambda r: r.id)
-                                with open("nuevo_principal.dat", "wb") as f_principal:
-                                    for reg in registers:
-                                        f_principal.write(reg.to_bytes())
-                            else:
-                                while True:
-                                    aux_data = file.read(RECORD_SIZE + 4)
-                                    if not aux_data:
-                                        aux.write(struct.pack('i', aux_index))
+        # Ordenar registros
+        registros.sort(key=lambda r: r.id)
 
-                                        record.indice = index2
-                                        temp.indice = aux_index
-                                        temp.filetype = 'a'
+        # Reescribir archivo principal
+        with open(self.filename, 'wb') as file:
+            for reg in registros:
+                reg.indice = -1
+                reg.filetype = 'd'
+                file.write(struct.pack('<i', -1))
+                file.write(reg.to_bytes())
 
-                                        aux.write(Venta.to_bytes(record))
-                                        limit -= 1
+        # Vaciar auxiliar
+        open(self.auxfile, 'wb').close()
+        self.k = 10  # reinicia el contador del auxiliar a su valor máximo
 
-                                        file.seek(index * (RECORD_SIZE + 4))
-                                        file.write(Venta.to_bytes(temp))
-                                        break
                                     
 
     def search(self, id):
-        with open(self.filename, 'rb') as f:
+        with open(self.filename, 'rb') as file:
             while True:
-                data = f.read(RECORD_SIZE)
+                index_data = file.read(4)
+                data = file.read(RECORD_SIZE)
                 if not data:
                     break
-                if len(data) < RECORD_SIZE:
-                    break
-                record = Venta.from_bytes(data)
-                if record.id == id and record.activo:
-                    return record
+                reg = Venta.from_bytes(data)
+                if reg.id == id and reg.activo == 1:
+                    return reg
+                # Si hay un puntero al auxiliar, seguimos buscando
+                if reg.indice != -1 and reg.filetype == 'a':
+                    found = self._search_aux(id, reg.indice)
+                    if found:
+                        return found
         return None
 
-    def delete(self, id):
-        found = False
-        with open(self.filename, 'r+b') as f:
-            pos = 0
-            while True:
-                data = f.read(RECORD_SIZE)
+    def _search_aux(self, id, start_index):
+        with open(self.auxfile, 'rb') as aux:
+            current_index = start_index
+            while current_index != -1:
+                pos = current_index * (4 + RECORD_SIZE)
+                aux.seek(pos)
+                index_data = aux.read(4)
+                data = aux.read(RECORD_SIZE)
                 if not data:
                     break
-                if len(data) < RECORD_SIZE:
-                    break
-                record = Venta.from_bytes(data)
-                if record.id == id and record.activo:
-                    record.activo = 0
-                    f.seek(pos)
-                    f.write(record.to_bytes())
-                    found = True
-                    break
-                pos += RECORD_SIZE
-        return found
+                reg = Venta.from_bytes(data)
+                if reg.id == id and reg.activo == 1:
+                    return reg
+                current_index = reg.indice if reg.filetype == 'a' else -1
+        return None
 
-    def range_search(self, lower, upper):
-        results = []
-        with open(self.filename, 'rb') as f:
+
+    def delete(self, id):
+        with open(self.filename, 'r+b') as file:
             while True:
-                data = f.read(RECORD_SIZE)
-                if len(data) < RECORD_SIZE:
+                pos = file.tell()
+                index_data = file.read(4)
+                data = file.read(RECORD_SIZE)
+                if not data:
                     break
-                record = Venta.from_bytes(data)
-                if record.activo and lower <= record.id <= upper:
-                    results.append(record)
-        return results
+                reg = Venta.from_bytes(data)
+                if reg.id == id and reg.activo == 1:
+                    reg.activo = 0
+                    file.seek(pos + 4)
+                    file.write(reg.to_bytes())
+                    print(f"Registro con ID {id} eliminado del archivo principal.")
+                    return True
+                # Buscar en auxiliar si hay puntero
+                if reg.indice != -1 and reg.filetype == 'a':
+                    deleted = self._delete_aux(id, reg.indice)
+                    if deleted:
+                        return True
+        print(f"Registro con ID {id} no encontrado.")
+        return False
+
+    def _delete_aux(self, id, start_index):
+        with open(self.auxfile, 'r+b') as aux:
+            current_index = start_index
+            while current_index != -1:
+                pos = current_index * (4 + RECORD_SIZE)
+                aux.seek(pos)
+                index_data = aux.read(4)
+                data = aux.read(RECORD_SIZE)
+                if not data:
+                    break
+                reg = Venta.from_bytes(data)
+                if reg.id == id and reg.activo == 1:
+                    reg.activo = 0
+                    aux.seek(pos + 4)
+                    aux.write(reg.to_bytes())
+                    print(f"Registro con ID {id} eliminado del archivo auxiliar.")
+                    return True
+                current_index = reg.indice if reg.filetype == 'a' else -1
+        return False
+
+
+    def search_range(self, min_id, max_id):
+        resultados = []
+        with open(self.filename, 'rb') as file:
+            while True:
+                index_data = file.read(4)
+                data = file.read(RECORD_SIZE)
+                if not data:
+                    break
+                reg = Venta.from_bytes(data)
+                if reg.activo == 1 and min_id <= reg.id <= max_id:
+                    resultados.append(reg)
+                # Buscar en auxiliar si hay puntero
+                if reg.indice != -1 and reg.filetype == 'a':
+                    aux_regs = self._search_aux_range(min_id, max_id, reg.indice)
+                    resultados.extend(aux_regs)
+        return resultados
+
+    def _search_aux_range(self, min_id, max_id, start_index):
+        encontrados = []
+        with open(self.auxfile, 'rb') as aux:
+            current_index = start_index
+            while current_index != -1:
+                pos = current_index * (4 + RECORD_SIZE)
+                aux.seek(pos)
+                index_data = aux.read(4)
+                data = aux.read(RECORD_SIZE)
+                if not data:
+                    break
+                reg = Venta.from_bytes(data)
+                if reg.activo == 1 and min_id <= reg.id <= max_id:
+                    encontrados.append(reg)
+                current_index = reg.indice if reg.filetype == 'a' else -1
+        return encontrados
+
 
 
 def cargar_csv(archivo_csv, archivo_bin):
