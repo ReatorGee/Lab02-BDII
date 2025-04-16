@@ -266,9 +266,9 @@ class SequentialFile:
 
 
 
-def cargar_csv(archivo_csv, archivo_bin):
-    sf = SequentialFile(archivo_bin, "auxiliar.dat", k=4)
-    with open(archivo_csv, newline='', encoding='latin1') as f:
+def cargar_ventas_csv(ruta_csv):
+    ventas = []
+    with open(ruta_csv, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
             venta = Venta(
@@ -278,44 +278,15 @@ def cargar_csv(archivo_csv, archivo_bin):
                 float(row['Precio unitario']),
                 row['Fecha de venta']
             )
-            sf.insert(venta)
+            ventas.append(venta)
+    return ventas
 
 
 if os.path.exists("ventas.dat"):
     os.remove("ventas.dat")
 
-cargar_csv("sales_dataset.csv", "ventas.dat")
-
-def generar_fecha():
-    inicio = datetime(2023, 1, 1)
-    delta = timedelta(days=random.randint(0, 730))  # hasta 2 años
-    return (inicio + delta).strftime("%Y-%m-%d")
-
-def generar_ventas_aleatorias(n):
-    productos = [
-        "Teclado", "Mouse", "Monitor", "Webcam", "Parlante",
-        "Auriculares", "Proyector", "Lector", "Batería", "Notebook",
-        "Tablet", "Router", "Disco Duro", "SSD", "Tarjeta de Video"
-    ]
-    ventas = []
-    usados = set()
-    while len(ventas) < n:
-        id_venta = random.randint(1000, 9999)
-        if id_venta in usados:
-            continue
-        usados.add(id_venta)
-        venta = Venta(
-            id=id_venta,
-            nombre=random.choice(productos),
-            cantidad=random.randint(1, 10),
-            precio=round(random.uniform(20.0, 2000.0), 2),
-            fechaVenta=generar_fecha()
-        )
-        ventas.append(venta)
-    return ventas
-
-def probar_tiempos_1000():
-    # Reiniciar archivos
+def probar_tiempos_con_csv():
+    # Eliminar archivos anteriores
     if os.path.exists("ventas_1000.dat"):
         os.remove("ventas_1000.dat")
     if os.path.exists("auxiliar_1000.dat"):
@@ -325,49 +296,49 @@ def probar_tiempos_1000():
     archivo_auxiliar = "auxiliar_1000.dat"
     sf = SequentialFile(archivo_principal, archivo_auxiliar, k=30)
 
-    ventas = generar_ventas_aleatorias(1000)
+    ventas = cargar_ventas_csv("sales_dataset.csv")
+    print(f"\n⏱️ Midiendo tiempos con {len(ventas)} registros del CSV...")
 
-    print("\n⏱️ Midiendo tiempos de los métodos con 1000 registros...")
-
-    # Insertar 1000 registros
+    # Inserción
     t0 = time.time()
     for venta in ventas:
         sf.insert(venta)
     t_insert = (time.time() - t0) * 1000
 
-    # Escoger un ID aleatorio para búsqueda y eliminación
+    # Tomamos un ID del medio para buscar y eliminar
     target_id = ventas[500].id
     rango_min = ventas[300].id
     rango_max = ventas[700].id
     if rango_min > rango_max:
         rango_min, rango_max = rango_max, rango_min
 
-    # Buscar un ID
+    # Búsqueda
     t0 = time.time()
     resultado = sf.search(target_id)
     t_search = (time.time() - t0) * 1000
 
-    # Buscar por rango
+    # Búsqueda por rango
     t0 = time.time()
     resultados_rango = sf.search_range(rango_min, rango_max)
     t_range = (time.time() - t0) * 1000
 
-    # Eliminar un ID
+    # Eliminación
     t0 = time.time()
     sf.delete(target_id)
     t_delete = (time.time() - t0) * 1000
 
-    # Reconstruir
+    # Reconstrucción
     t0 = time.time()
     sf.rebuild()
     t_rebuild = (time.time() - t0) * 1000
 
-    print(f"\n📊 Resultados de tiempo con 1000 registros:")
-    print(f"🟢 Inserción total de 1000 registros: {t_insert:.3f} ms")
+    # Resultados
+    print(f"\n📊 Resultados de tiempo con CSV real:")
+    print(f"🟢 Inserción total de {len(ventas)} registros: {t_insert:.3f} ms")
     print(f"🔍 Búsqueda por ID ({target_id}): {t_search:.3f} ms")
     print(f"🔎 Búsqueda por rango ({rango_min}–{rango_max}): {t_range:.3f} ms")
     print(f"🗑 Eliminación por ID ({target_id}): {t_delete:.3f} ms")
     print(f"♻️ Reconstrucción completa: {t_rebuild:.3f} ms")
 
 # Ejecutar prueba
-probar_tiempos_1000()
+probar_tiempos_con_csv()
