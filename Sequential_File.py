@@ -1,6 +1,9 @@
 import struct
 import os
 import csv
+import time
+import random
+from datetime import datetime, timedelta
 
 FORMAT = "<i30sif10si1si"
 RECORD_SIZE = struct.calcsize(FORMAT)
@@ -283,54 +286,88 @@ if os.path.exists("ventas.dat"):
 
 cargar_csv("sales_dataset.csv", "ventas.dat")
 
-def probar_metodos():
-    archivo_principal = "ventas.dat"
-    archivo_auxiliar = "auxiliar.dat"
-    sf = SequentialFile(archivo_principal, archivo_auxiliar, k=2)
+def generar_fecha():
+    inicio = datetime(2023, 1, 1)
+    delta = timedelta(days=random.randint(0, 730))  # hasta 2 años
+    return (inicio + delta).strftime("%Y-%m-%d")
 
-    print("\n📥 Insertando registros...")
-    ventas = [
-        Venta(101, "Teclado", 2, 25.99, "2024-01-15"),
-        Venta(105, "Mouse", 1, 15.50, "2024-01-17"),
-        Venta(103, "Monitor", 3, 120.75, "2024-01-16"),
-        Venta(107, "Webcam", 1, 49.99, "2024-01-18"),
-        Venta(102, "Parlante", 4, 35.00, "2024-01-15")
+def generar_ventas_aleatorias(n):
+    productos = [
+        "Teclado", "Mouse", "Monitor", "Webcam", "Parlante",
+        "Auriculares", "Proyector", "Lector", "Batería", "Notebook",
+        "Tablet", "Router", "Disco Duro", "SSD", "Tarjeta de Video"
     ]
+    ventas = []
+    usados = set()
+    while len(ventas) < n:
+        id_venta = random.randint(1000, 9999)
+        if id_venta in usados:
+            continue
+        usados.add(id_venta)
+        venta = Venta(
+            id=id_venta,
+            nombre=random.choice(productos),
+            cantidad=random.randint(1, 10),
+            precio=round(random.uniform(20.0, 2000.0), 2),
+            fechaVenta=generar_fecha()
+        )
+        ventas.append(venta)
+    return ventas
+
+def probar_tiempos_1000():
+    # Reiniciar archivos
+    if os.path.exists("ventas_1000.dat"):
+        os.remove("ventas_1000.dat")
+    if os.path.exists("auxiliar_1000.dat"):
+        os.remove("auxiliar_1000.dat")
+
+    archivo_principal = "ventas_1000.dat"
+    archivo_auxiliar = "auxiliar_1000.dat"
+    sf = SequentialFile(archivo_principal, archivo_auxiliar, k=30)
+
+    ventas = generar_ventas_aleatorias(1000)
+
+    print("\n⏱️ Midiendo tiempos de los métodos con 1000 registros...")
+
+    # Insertar 1000 registros
+    t0 = time.time()
     for venta in ventas:
         sf.insert(venta)
+    t_insert = (time.time() - t0) * 1000
 
-    print("\n🔍 Buscando venta con ID 103...")
-    resultado = sf.search(103)
-    if resultado:
-        print(f"✅ Encontrado: {resultado.id} - {resultado.nombre.strip()} - ${resultado.precio}")
-    else:
-        print("❌ No se encontró la venta.")
+    # Escoger un ID aleatorio para búsqueda y eliminación
+    target_id = ventas[500].id
+    rango_min = ventas[300].id
+    rango_max = ventas[700].id
+    if rango_min > rango_max:
+        rango_min, rango_max = rango_max, rango_min
 
-    print("\n🔎 Buscando ventas entre ID 102 y 106...")
-    resultados_rango = sf.search_range(102, 106)
-    for r in resultados_rango:
-        print(f"🧾 ID: {r.id}, Producto: {r.nombre.strip()}, Precio: {r.precio}")
+    # Buscar un ID
+    t0 = time.time()
+    resultado = sf.search(target_id)
+    t_search = (time.time() - t0) * 1000
 
-    print("\n🗑 Eliminando venta con ID 105...")
-    if sf.delete(105):
-        print("✅ Venta eliminada.")
-    else:
-        print("❌ Venta no encontrada para eliminar.")
+    # Buscar por rango
+    t0 = time.time()
+    resultados_rango = sf.search_range(rango_min, rango_max)
+    t_range = (time.time() - t0) * 1000
 
-    print("\n🔍 Verificando que la venta con ID 105 no exista...")
-    resultado = sf.search(105)
-    if resultado:
-        print("❌ Aún se encuentra activo.")
-    else:
-        print("✅ Confirmado, ha sido eliminado.")
+    # Eliminar un ID
+    t0 = time.time()
+    sf.delete(target_id)
+    t_delete = (time.time() - t0) * 1000
 
-    print("\n♻️ Forzando reconstrucción del archivo...")
+    # Reconstruir
+    t0 = time.time()
     sf.rebuild()
+    t_rebuild = (time.time() - t0) * 1000
 
-    print("\n🧾 Estado final después de la reconstrucción:")
-    resultados_finales = sf.search_range(100, 110)
-    for r in resultados_finales:
-        print(f"ID: {r.id}, Producto: {r.nombre.strip()}, Precio: {r.precio}, Activo: {r.activo}, Tipo: {r.filetype}")
+    print(f"\n📊 Resultados de tiempo con 1000 registros:")
+    print(f"🟢 Inserción total de 1000 registros: {t_insert:.3f} ms")
+    print(f"🔍 Búsqueda por ID ({target_id}): {t_search:.3f} ms")
+    print(f"🔎 Búsqueda por rango ({rango_min}–{rango_max}): {t_range:.3f} ms")
+    print(f"🗑 Eliminación por ID ({target_id}): {t_delete:.3f} ms")
+    print(f"♻️ Reconstrucción completa: {t_rebuild:.3f} ms")
 
-# Ejecutar función de prueba
-probar_metodos()
+# Ejecutar prueba
+probar_tiempos_1000()
