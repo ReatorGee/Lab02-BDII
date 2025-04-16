@@ -1,5 +1,6 @@
 import struct
 import os
+import csv
 
 # Definición del formato: < indica little-endian y sin padding
 FORMAT = "<i30sif10si1si"
@@ -264,43 +265,73 @@ class SequentialFile:
 
 
 def cargar_csv(archivo_csv, archivo_bin):
-    sf = SequentialFile(archivo_bin)
+    sf = SequentialFile(archivo_bin, "auxiliar.dat", k=4)
     with open(archivo_csv, newline='', encoding='latin1') as f:
         reader = csv.DictReader(f)
         for row in reader:
             venta = Venta(
-    int(row['ID de la venta']),
-    row['Nombre producto'],
-    int(row['Cantidad vendida']),
-    float(row['Precio unitario']),
-    row['Fecha de venta']
-)
+                int(row['ID de la venta']),
+                row['Nombre producto'],
+                int(row['Cantidad vendida']),
+                float(row['Precio unitario']),
+                row['Fecha de venta']
+            )
             sf.insert(venta)
+
 
 if os.path.exists("ventas.dat"):
     os.remove("ventas.dat")
 
 cargar_csv("sales_dataset.csv", "ventas.dat")
 
-# Verificamos si se insertaron correctamente
-sf = SequentialFile("ventas.dat")
-for record in sf.range_search(100, 105):
-    print(f"{record.id} - {record.nombre} - {record.cantidad} - {record.precio} - {record.fechaVenta}")
+def probar_metodos():
+    archivo_principal = "ventas.dat"
+    archivo_auxiliar = "auxiliar.dat"
+    sf = SequentialFile(archivo_principal, archivo_auxiliar, k=2)
 
+    print("\n📥 Insertando registros...")
+    ventas = [
+        Venta(101, "Teclado", 2, 25.99, "2024-01-15"),
+        Venta(105, "Mouse", 1, 15.50, "2024-01-17"),
+        Venta(103, "Monitor", 3, 120.75, "2024-01-16"),
+        Venta(107, "Webcam", 1, 49.99, "2024-01-18"),
+        Venta(102, "Parlante", 4, 35.00, "2024-01-15")
+    ]
+    for venta in ventas:
+        sf.insert(venta)
 
-sf = SequentialFile("ventas.dat")
-sf.insert(Venta(101, "Galletas", 10, 2.5, "2025-04-14"))
-sf.insert(Venta(102, "Agua", 20, 1.2, "2025-04-15"))
+    print("\n🔍 Buscando venta con ID 103...")
+    resultado = sf.search(103)
+    if resultado:
+        print(f"✅ Encontrado: {resultado.id} - {resultado.nombre.strip()} - ${resultado.precio}")
+    else:
+        print("❌ No se encontró la venta.")
 
-# Buscar un registro
-r = sf.search(101)
-if r:
-    print(f"{r.nombre} - {r.precio}")
+    print("\n🔎 Buscando ventas entre ID 102 y 106...")
+    resultados_rango = sf.search_range(102, 106)
+    for r in resultados_rango:
+        print(f"🧾 ID: {r.id}, Producto: {r.nombre.strip()}, Precio: {r.precio}")
 
-# Eliminar un registro
-sf.delete(101)
+    print("\n🗑 Eliminando venta con ID 105...")
+    if sf.delete(105):
+        print("✅ Venta eliminada.")
+    else:
+        print("❌ Venta no encontrada para eliminar.")
 
-# Buscar por rango
-for r in sf.range_search(1, 100):
-    print(f"{r.id:<3} | {r.nombre.strip():<30} | {r.cantidad:<3} | {r.precio:<8} | {r.fechaVenta.strip()}")
+    print("\n🔍 Verificando que la venta con ID 105 no exista...")
+    resultado = sf.search(105)
+    if resultado:
+        print("❌ Aún se encuentra activo.")
+    else:
+        print("✅ Confirmado, ha sido eliminado.")
 
+    print("\n♻️ Forzando reconstrucción del archivo...")
+    sf.rebuild()
+
+    print("\n🧾 Estado final después de la reconstrucción:")
+    resultados_finales = sf.search_range(100, 110)
+    for r in resultados_finales:
+        print(f"ID: {r.id}, Producto: {r.nombre.strip()}, Precio: {r.precio}, Activo: {r.activo}, Tipo: {r.filetype}")
+
+# Ejecutar función de prueba
+probar_metodos()
