@@ -2,7 +2,6 @@ import struct
 import os
 import csv
 
-# Definición del formato: < indica little-endian y sin padding
 FORMAT = "<i30sif10si1si"
 RECORD_SIZE = struct.calcsize(FORMAT)
 
